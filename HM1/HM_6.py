@@ -11,7 +11,7 @@ agent_1 = N_BANDIT(variance = variance,
 					n = n, 
 					num_trails = num_trails, 
 					test_runs  = test_runs,
-					UCB = 2)
+					UCB = 1)
 agent_1.run_test()
 
 print("time taken:{0} s".format(time.time() - t1))

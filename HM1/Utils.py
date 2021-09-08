@@ -12,12 +12,20 @@ class N_BANDIT:
 	test_runs: number of experiments for averaging
 	OIV: optimistic initial value
 	UCB: c parameter in UCB
+	const_step: constant step size in estimate update, 
+		if not given then incremental updates
+	NS : non - stationary condition (problem 2.5) -> std. deviation of random walk
 	"""
 	def __init__(self, **kwargs):
 		self.var = kwargs['variance'] # variance
 		self.n = kwargs['n']
 		self.num_trails = int(kwargs['num_trails'])
 		self.test_runs = int(kwargs['test_runs'])
+		self.alpha = None
+		self.non_stat = kwargs['non_stat'] if 'non_stat' in kwargs.keys() else None
+
+		if ('const_step' in kwargs.keys()):
+			self.alpha = kwargs['const_step']
 
 
 		if ('OIV' in kwargs.keys() ):
@@ -25,27 +33,30 @@ class N_BANDIT:
 			self.oiv = kwargs['OIV']
 		else:
 			self.estimates = np.zeros((self.n))
-			self.oiv = False
+			self.oiv = None
 
 		if ("UCB" in kwargs.keys()):
 			self.c = kwargs['UCB']
-			self.eps = False
+			self.eps = None
 		else:
-			self.c = False
+			self.c = None
 			self.eps = kwargs["eps"]
-			self.update_action_picker(self.eps,1)
+			# self.update_action_picker(1)
 		self.means = np.random.randn((self.n)) # 0 mean , 1 variance
 
-	def update_action_picker(self,eps,iteration):
-		if (self.eps == "INVERSE" or iteration == 1):
-			eps = 1/iteration
-			probs = np.ones((self.n+1))
-			probs[:self.n] = eps/self.n # 
-			probs[self.n]  = 1 - eps # greedy action
+	def update_action_picker(self,iteration):
+		if (self.eps == "INVERSE"):
+			self.eps = 1/iteration
 
-			arms = np.arange(self.n+1)
-			self.action_picker = stats.rv_discrete(values = (arms,probs))
-	
+	def pick_action(self):
+		probs = np.zeros((self.n))
+		best_arm = np.argmax(self.estimates)
+		probs[best_arm] = 1 - self.eps
+		probs[0] += self.eps/self.n
+		for i in range(1,self.n):
+			probs[i] +=  probs[i-1]  + self.eps/self.n
+		r = np.random.uniform()
+		return np.where(probs >= r)[0][0]
 
 
 	def run_sim(self):
@@ -57,20 +68,22 @@ class N_BANDIT:
 		opt_count = 0 # optimal action count
 		avg_rewards = 0 # running average 
 
-		if self.c != False:
+		if self.c != None :
 			self.arm_count = np.zeros((self.n))
 
 		for i in range(1,self.num_trails+1):
 
-			if self.c == False:
-				self.update_action_picker(self.eps,i)
-				arm = self.identify_arm(self.action_picker.rvs())
+			if self.c == None:
+				self.update_action_picker(i)
+				arm = self.pick_action()
 			else :
 				arm = self.identify_arm_UCB(i)
 				self.arm_count[arm] += 1
 
 			reward = self.draw_reward(arm)
 			self.update_estimates(arm,reward,i)
+			self.update_means_NS()
+
 			avg_rewards = (avg_rewards *(i - 1) + reward )/i
 			# avg_rewards = reward
 
@@ -102,9 +115,11 @@ class N_BANDIT:
 		plt.ylabel("Optimal Action(%)")
 
 		for agent in args:
-			label = "OIV:{0}".format(agent.oiv) if agent.oiv else ""
-			label += " UCB:{0}".format(agent.c) if agent.c else ""
-			label += " EPS:{0}".format(agent.eps)  if agent.eps else ""
+			label = "OIV:{0}".format(agent.oiv) if agent.oiv != None else ""
+			label += " UCB:{0}".format(agent.c) if agent.c != None else ""
+			label += " EPS:{0}".format(agent.eps)  if agent.eps != None else ""
+			label += " alpha:{0}".format(agent.alpha) if agent.alpha != None else ""
+			label += " NS" if agent.non_stat != None else ""
 			plt.subplot(2,1,1)
 			plt.plot(np.arange(agent.num_trails)+1,agent.avg_rewards_over_test,label = label)
 			plt.legend()
@@ -122,9 +137,11 @@ class N_BANDIT:
 		plt.subplots_adjust(left=0.04,bottom=0.08,right=0.96,top=0.95,wspace=0.13,hspace=0.21)
 		for agent in args:
 			steps = np.arange(agent.num_trails)+1
-			label = "OIV:{0}".format(agent.oiv) if agent.oiv else ""
-			label += " UCB:{0}".format(agent.c) if agent.c else ""
-			label += " EPS:{0}".format(agent.eps)  if agent.eps else ""
+			label = "OIV:{0}".format(agent.oiv) if agent.oiv != None else ""
+			label += " UCB:{0}".format(agent.c) if agent.c != None else ""
+			label += " EPS:{0}".format(agent.eps)  if agent.eps != None else ""
+			label += " alpha:{0}".format(agent.alpha) if agent.alpha != None else ""
+			label += " NS" if agent.non_stat != None else ""
 			plt.subplot(len(args),1,args.index(agent)+1)
 			for arm in range(agent.n):
 				plt.ylabel("Abs. Estimate Error")
@@ -137,15 +154,16 @@ class N_BANDIT:
 		plt.show()
 
 
+	def update_means_NS(self):
+		if self.non_stat != None:
+			self.means += self.non_stat*np.random.randn((self.n))
 
 	def update_estimates(self,arm,reward,iteration):
-		self.estimates[arm] = self.estimates[arm] + (reward - self.estimates[arm])/iteration
+		step = self.alpha if self.alpha != None else 1/iteration
+		self.estimates[arm] = self.estimates[arm] + (reward - self.estimates[arm])*step 
 
 	def draw_reward(self,arm):
 		return self.means[arm] + np.sqrt(self.var)*np.random.randn()
-
-	def identify_arm(self,arm):
-		return arm if arm < self.n else np.argmax(self.estimates)
 
 	def identify_arm_UCB(self,iteration):
 		return np.argmax(self.estimates + self.c*np.sqrt(np.log(iteration)/self.arm_count))
